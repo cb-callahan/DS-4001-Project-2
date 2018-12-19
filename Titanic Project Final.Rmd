@@ -1,0 +1,406 @@
+---
+title: "Titanic Project"
+author: "Joseph Rilling, Sebi Gutierrez, Colleen Callahan"
+date: "11/30/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Attempt #1
+
+The first model we used was a simple random forest model with a validation set. We did not do any feature engineering for this first model. 
+```{r}
+library(caret)
+library(randomForest)
+titanic_train <- read.csv("titanic_train_set.csv")
+titanic_test <- read.csv("titanic_test_set.csv")
+
+F=c(3, 4, 9)
+for(i in F) {titanic_test[,i]=as.factor(titanic_test[,i])}
+
+F=c(2,3,4,9)
+for(i in F) {titanic_train[,i]=as.factor(titanic_train[,i])}
+
+index <- createDataPartition(titanic_train$Survived, p=0.75, list = FALSE)
+titanic_train_set <- titanic_train[index,]
+validation_set <- titanic_train[-index,]
+
+
+titanicrf <- randomForest(titanic_train_set[,-2], titanic_train_set$Survived, 
+                          sampsize = round(0.6*(length(titanic_train_set$Survived))),ntree = 50, 
+                          mtry = sqrt(7), importance = TRUE)
+
+pred <- predict(titanicrf, validation_set)
+mean(pred==validation_set$Survived)
+
+pred2 <- predict(titanicrf, titanic_test)
+write.csv(pred2, file="Predictions.csv")
+```
+Attemp #2
+
+For the second model, we engineered four features. First we engineered a feature called Age Group that binned ages into factors of "Senior" (age>55), "Adult" (30<age<= 55), "YoungAdult" (16<age<=30), and "Youth" (age<=16). Next, we engineered a feature called Fare Group that binned fares into factors of "High" (fare>100), "Medium" (50<fare<=100), and "Low" (fare<=50). The next engineered feature is called Family size and finds the size of the onboard family of a given passenger. Finally, we created a feature called Alone that desginated if a given passenger was traveling alone. 
+
+```{r}
+library(dplyr)
+titanic_train_set <- read.csv("titanic_train_set.csv")
+titanic_test <- read.csv("titanic_test_set.csv")
+
+F=c(3, 4, 9)
+for(i in F) {titanic_test[,i]=as.factor(titanic_test[,i])}
+
+F=c(2,3,4,9)
+for(i in F) {titanic_train_set[,i]=as.factor(titanic_train_set[,i])}
+
+## FOR TRAINING
+## binning age
+attach(titanic_train_set)
+titanic_train_set$Age_Group [Age > 55] <-"Senior"
+titanic_train_set$Age_Group [Age <= 55 & Age > 30] <-"Adult"
+titanic_train_set$Age_Group [Age <= 30 & Age > 16] <-"YoungAdult"
+titanic_train_set$Age_Group [Age <= 16] <-"Youth"
+titanic_train_set$Age_Group <-as.factor(titanic_train_set$Age_Group)
+## binning fares 
+titanic_train_set$Fare_Group [Fare > 100] <- "High"
+titanic_train_set$Fare_Group [Fare <= 100 & Fare > 50] <- "Medium"
+titanic_train_set$Fare_Group [Fare <= 50] <- "Low"
+titanic_train_set$Fare_Group <-as.factor(titanic_train_set$Fare_Group)
+detach(titanic_train_set)
+## family size 
+titanic_train_set <-  titanic_train_set %>% mutate(Family_Size = 1 + SibSp + Parch) ## 1 for self
+titanic_train_set$Family_Size <-as.numeric(titanic_train_set$Family_Size)
+## flag for alone
+titanic_train_set <-  titanic_train_set %>% mutate(Family_Size, Alone = ifelse(Family_Size > 1, "0", "1"))
+titanic_train_set$Alone <-as.factor(titanic_train_set$Alone)
+## FOR TEST SET (EQUIVALENT)
+## binning age
+attach(titanic_test)
+titanic_test$Age_Group [Age > 55] <-"Senior"
+titanic_test$Age_Group [Age <= 55 & Age > 30] <-"Adult"
+titanic_test$Age_Group [Age <= 30 & Age > 16] <-"YoungAdult"
+titanic_test$Age_Group [Age <= 16] <-"Youth"
+titanic_test$Age_Group <-as.factor(titanic_test$Age_Group)
+## binning fares 
+titanic_test$Fare_Group [Fare > 100] <- "High"
+titanic_test$Fare_Group [Fare <= 100 & Fare > 50] <- "Medium"
+titanic_test$Fare_Group [Fare <= 50] <- "Low"
+titanic_test$Fare_Group <-as.factor(titanic_test$Fare_Group)
+detach(titanic_test)
+## family size 
+titanic_test <-  titanic_test %>% mutate(Family_Size = 1 + SibSp + Parch) ## 1 for self
+titanic_test$Family_Size <-as.numeric(titanic_test$Family_Size)
+## flag for alone
+titanic_test <-  titanic_test %>% mutate(Family_Size, Alone = ifelse(Family_Size > 1, "0", "1"))
+titanic_test$Alone <-as.factor(titanic_test$Alone)
+
+
+index <- createDataPartition(titanic_train_set$Survived, p=0.75, list = FALSE)
+titanic_train <- titanic_train_set[index,]
+validation_set <- titanic_train_set[-index,]
+
+titanicrf <- randomForest(titanic_train[,-(1:2) ], titanic_train$Survived, 
+                          sampsize = round(0.6*(length(titanic_train$Survived))),ntree = 50, 
+                          mtry = sqrt(7), importance = TRUE)
+
+##varImp(titanicrf)
+##varImpPlot(titanicrf,type=2)
+
+pred <- predict(titanicrf, validation_set)
+mean(pred==validation_set$Survived)
+
+
+pred2 <- predict(titanicrf, titanic_test)
+write.csv(pred2, file="Predictions.csv")
+
+```
+
+Attempt #3
+
+In this attempt we pick our divisions for Age Group and Fare Group more smartly. We first look at density plots for Age and Fare. Then, according to these density plots, we group Age and Fare into Age Groups and Fare Groups where there are more natural bins. We also created more bins in Age Group and Fare Group. This change let to a marked improvement our performance. 
+
+```{r}
+summary(titanic_train_set$Age)
+a <- ggplot(titanic_train_set, aes(x = Age))
+a + geom_density() +
+  geom_vline(aes(xintercept = mean(Age)), 
+             linetype = "dashed", size = 0.6)
+summary(titanic_train_set$Fare)
+b <- ggplot(titanic_train_set, aes(x = Fare))
+b + geom_density() +
+  geom_vline(aes(xintercept = mean(Fare)), 
+             linetype = "dashed", size = 0.6)
+
+
+titanic_train_set <- read.csv("titanic_train_set.csv")
+titanic_test <- read.csv("titanic_test_set.csv")
+F=c(3, 4, 9)
+for(i in F) {titanic_test[,i]=as.factor(titanic_test[,i])}
+
+F=c(2,3,4,9)
+for(i in F) {titanic_train_set[,i]=as.factor(titanic_train_set[,i])}
+
+## FOR TRAINING
+## binning age
+attach(titanic_train_set)
+titanic_train_set$Age_Group [Age > 55] <-"Senior"
+titanic_train_set$Age_Group [Age <= 55 & Age > 29] <-"Adult"
+titanic_train_set$Age_Group [Age <= 29 & Age > 19] <-"YoungAdult"
+titanic_train_set$Age_Group [Age <= 19 & Age > 13] <-"Teen"
+titanic_train_set$Age_Group [Age <= 13] <-"Youth"
+titanic_train_set$Age_Group <-as.factor(titanic_train_set$Age_Group)
+## binning fares 
+titanic_train_set$Fare_Group [Fare > 50] <- "High"
+titanic_train_set$Fare_Group [Fare <= 50 & Fare > 35] <- "MediumHigh"
+titanic_train_set$Fare_Group [Fare <= 35 & Fare > 25] <- "Medium"
+titanic_train_set$Fare_Group [Fare <= 25 & Fare > 10] <- "MediumLow"
+titanic_train_set$Fare_Group [Fare <= 10] <- "Low"
+titanic_train_set$Fare_Group <-as.factor(titanic_train_set$Fare_Group)
+detach(titanic_train_set)
+## family size 
+titanic_train_set <-  titanic_train_set %>% mutate(Family_Size = 1 + SibSp + Parch) ## 1 for self
+titanic_train_set$Family_Size <-as.numeric(titanic_train_set$Family_Size)
+## flag for alone
+titanic_train_set <-  titanic_train_set %>% mutate(Family_Size, Alone = ifelse(Family_Size > 1, "0", "1"))
+titanic_train_set$Alone <-as.factor(titanic_train_set$Alone)
+## FOR TEST SET (EQUIVALENT)
+## binning age
+attach(titanic_test)
+titanic_test$Age_Group [Age > 55] <-"Senior"
+titanic_test$Age_Group [Age <= 55 & Age > 29] <-"Adult"
+titanic_test$Age_Group [Age <= 29 & Age > 19] <-"YoungAdult"
+titanic_test$Age_Group [Age <= 19 & Age > 13] <-"Teen"
+titanic_test$Age_Group [Age <= 13] <-"Youth"
+titanic_test$Age_Group <-as.factor(titanic_test$Age_Group)
+## binning fares 
+titanic_test$Fare_Group [Fare > 50] <- "High"
+titanic_test$Fare_Group [Fare <= 50 & Fare > 35] <- "MediumHigh"
+titanic_test$Fare_Group [Fare <= 35 & Fare > 25] <- "Medium"
+titanic_test$Fare_Group [Fare <= 25 & Fare > 10] <- "MediumLow"
+titanic_test$Fare_Group [Fare <= 10] <- "Low"
+titanic_test$Fare_Group <-as.factor(titanic_test$Fare_Group)
+detach(titanic_test)
+## family size 
+titanic_test <-  titanic_test %>% mutate(Family_Size = 1 + SibSp + Parch) ## 1 for self
+titanic_test$Family_Size <-as.numeric(titanic_test$Family_Size)
+## flag for alone
+titanic_test <-  titanic_test %>% mutate(Family_Size, Alone = ifelse(Family_Size > 1, "0", "1"))
+titanic_test$Alone <-as.factor(titanic_test$Alone)
+
+
+index <- createDataPartition(titanic_train_set$Survived, p=0.75, list = FALSE)
+titanic_train <- titanic_train_set[index,]
+validation_set <- titanic_train_set[-index,]
+
+titanicrf <- randomForest(titanic_train[,-(1:2) ], titanic_train$Survived, 
+                          sampsize = round(0.6*(length(titanic_train$Survived))),ntree = 50, 
+                          mtry = sqrt(7), importance = TRUE)
+
+##varImp(titanicrf)
+##varImpPlot(titanicrf,type=2)
+
+pred <- predict(titanicrf, validation_set)
+mean(pred==validation_set$Survived)
+
+
+pred2 <- predict(titanicrf, titanic_test)
+write.csv(pred2, file="Predictions.csv")
+```
+Attempt #4 
+In this attempt, we created a new feature called Score. The score for a passenger, p, depends on the groups that the passenger belongs to. For example, if a passenger is female, and 80% of females survived, then .8 is added to the score of p. If p is male, then .2 is added to the score of p. This process is repeated for the following factors: Sex, Alone, Fare_Group, and Age_Group. Our performance improved greatly with this new factor, and Score became the factor with the highest importance. 
+```{r}
+
+## Feature engineering Score on Training set
+female_survived <- (count(titanic_train_set %>% filter(Sex == 'female' & Survived == 1)) / count(titanic_train_set %>% filter(Sex == 'female')))
+female_survived <- as.numeric(female_survived)
+male_survived <- count(titanic_train_set %>% filter(Sex == 'male' & Survived == 1)) / count(titanic_train_set %>% filter(Sex == 'male'))
+male_survived <- as.numeric(male_survived)
+
+is_alone <- count(titanic_train_set %>% filter(Alone == 1 & Survived == 1)) / count(titanic_train_set %>% filter(Alone == 1))
+not_alone <- count(titanic_train_set %>% filter(Alone == 0 & Survived == 1)) / count(titanic_train_set %>% filter(Alone == 0))
+is_alone <- as.numeric(is_alone)
+not_alone <- as.numeric(not_alone)
+
+high_fare <- count(titanic_train_set %>% filter(Fare_Group == 'High' & Survived == 1)) / count(titanic_train_set %>% filter(Fare_Group == 'High'))
+high_fare <-as.numeric(high_fare)
+medium_high_fare <- count(titanic_train_set %>% filter(Fare_Group == 'MediumHigh' & Survived == 1)) / count(titanic_train_set %>% filter(Fare_Group == 'MediumHigh'))
+medium_high_fare <-as.numeric(medium_high_fare)
+medium_fare <- count(titanic_train_set %>% filter(Fare_Group == 'Medium' & Survived == 1)) / count(titanic_train_set %>% filter(Fare_Group == 'Medium'))
+medium_fare <-as.numeric(medium_fare)
+medium_low_fare <- count(titanic_train_set %>% filter(Fare_Group == 'MediumLow' & Survived == 1)) / count(titanic_train_set %>% filter(Fare_Group == 'MediumLow'))
+medium_low_fare <-as.numeric(medium_low_fare)
+low_fare <- count(titanic_train_set %>% filter(Fare_Group == 'Low' & Survived == 1)) / count(titanic_train_set %>% filter(Fare_Group == 'Low'))
+low_fare <-as.numeric(low_fare)
+
+senior <- count(titanic_train_set %>% filter(Age_Group == 'Senior' & Survived == 1)) / count(titanic_train_set %>% filter(Age_Group == 'Senior'))
+senior <-as.numeric(senior)
+adult <- count(titanic_train_set %>% filter(Age_Group == 'Adult' & Survived == 1)) / count(titanic_train_set %>% filter(Age_Group == 'Adult'))
+adult <-as.numeric(adult)
+young_adult <- count(titanic_train_set %>% filter(Age_Group == 'YoungAdult' & Survived == 1)) / count(titanic_train_set %>% filter(Age_Group == 'YoungAdult'))
+young_adult <-as.numeric(young_adult)
+teen <- count(titanic_train_set %>% filter(Age_Group == 'Teen' & Survived == 1)) / count(titanic_train_set %>% filter(Age_Group == 'Teen'))
+teen <-as.numeric(teen)
+youth <- count(titanic_train_set %>% filter(Age_Group == 'Youth' & Survived == 1)) / count(titanic_train_set %>% filter(Age_Group == 'Youth'))
+youth <-as.numeric(youth)
+
+
+titanic_train_set$Score <- ifelse(titanic_train_set$Sex == 'female', female_survived, male_survived)
+titanic_train_set$Score <- as.numeric(titanic_train_set$Score)
+
+titanic_train_set$Score <- ifelse(titanic_train_set$Alone == 1, is_alone + titanic_train_set$Score, not_alone + titanic_train_set$Score)
+titanic_train_set$Score <- as.numeric(titanic_train_set$Score)
+
+titanic_train_set$Score <- ifelse(titanic_train_set$Fare_Group == 'High', high_fare + titanic_train_set$Score, ifelse(titanic_train_set$Fare_Group == 'MediumHigh', medium_high_fare + titanic_train_set$Score, ifelse(titanic_train_set$Fare_Group == 'Medium', medium_fare + titanic_train_set$Score, ifelse (titanic_train_set$Fare_Group == 'MediumLow', medium_low_fare + titanic_train_set$Score, ifelse(titanic_train_set$Fare_Group == 'Low', low_fare + titanic_train_set$Score, 0)))))
+
+titanic_train_set$Score <- ifelse(titanic_train_set$Age_Group == 'Senior', senior + titanic_train_set$Score, ifelse(titanic_train_set$Age_Group == 'Adult', adult + titanic_train_set$Score, ifelse(titanic_train_set$Age_Group == 'YoungAdult', young_adult + titanic_train_set$Score, ifelse (titanic_train_set$Age_Group == 'Teen', teen + titanic_train_set$Score, ifelse(titanic_train_set$Age_Group == 'Youth', youth + titanic_train_set$Score, 0)))))
+
+
+index <- createDataPartition(titanic_train_set$Survived, p=0.75, list = FALSE)
+titanic_train <- titanic_train_set[index,]
+validation_set <- titanic_train_set[-index,]
+
+titanicrf <- randomForest(titanic_train[,-(1:2) ], titanic_train$Survived, 
+                          sampsize = round(0.6*(length(titanic_train$Survived))),ntree = 50, 
+                          mtry = sqrt(12), importance = TRUE)
+varImpPlot(titanicrf, type=2)
+
+pred <- predict(titanicrf, validation_set)
+mean(pred==validation_set$Survived)
+
+
+```
+
+```{r}
+
+## Feature engineering Score on test set
+
+titanic_test$Score <- ifelse(titanic_test$Sex == 'female', female_survived, male_survived)
+titanic_test$Score <- as.numeric(titanic_test$Score)
+titanic_test$Score <- ifelse(titanic_test$Alone == 1, is_alone + titanic_test$Score, not_alone + titanic_test$Score)
+titanic_test$Score <- as.numeric(titanic_test$Score)
+titanic_test$Score <- ifelse(titanic_test$Fare_Group == 'High', high_fare + titanic_test$Score, ifelse(titanic_test$Fare_Group == 'MediumHigh', medium_high_fare + titanic_test$Score, ifelse(titanic_test$Fare_Group == 'Medium', medium_fare + titanic_test$Score, ifelse (titanic_test$Fare_Group == 'MediumLow', medium_low_fare + titanic_test$Score, ifelse(titanic_test$Fare_Group == 'Low', low_fare + titanic_test$Score, 0)))))
+titanic_test$Score <- ifelse(titanic_test$Age_Group == 'Senior', senior + titanic_test$Score, ifelse(titanic_test$Age_Group == 'Adult', adult + titanic_test$Score, ifelse(titanic_test$Age_Group == 'YoungAdult', young_adult + titanic_test$Score, ifelse (titanic_test$Age_Group == 'Teen', teen + titanic_test$Score, ifelse(titanic_test$Age_Group == 'Youth', youth + titanic_test$Score, 0)))))
+
+titanicrf <- randomForest(titanic_train[,-(1:2) ], titanic_train$Survived, 
+                          sampsize = round(0.6*(length(titanic_train$Survived))),ntree = 50, 
+                          mtry = sqrt(12), importance = TRUE)
+
+pred2 <- predict(titanicrf, titanic_test)
+write.csv(pred2, file="Predictions_score.csv")
+
+```
+
+Attempt #5
+
+The following attempt is using nested CV. This model did very well on the validation set, but did not outperform our previous model when it was tested on the test set. 
+```{r}
+
+library(cvTools)
+dataset <- titanic_train_set
+k <- 5
+
+folds <- cvFolds(NROW(dataset), K=k)
+dataset$holdoutpred <- rep(0,nrow(dataset))
+accuracy.vector <- rep(0,k)
+
+for(i in 1:k){
+  train <- dataset[folds$subsets[folds$which != i], ] #Set the training set
+  test <- dataset[folds$subsets[folds$which == i], ] #Set the validation set
+  ControlParameters <- trainControl(method="cv", number = 5,
+                                    savePredictions = TRUE,
+                                    classProbs = FALSE)
+
+  parameterGrid <-expand.grid(mtry=c(2,3,4,5,6))
+
+  cvRandomModel <- train(Survived ~ ., data = train,
+                         method = "rf",
+                         trControl = ControlParameters,
+                         tuneGrid = parameterGrid)
+
+  p <- predict(cvRandomModel,test)
+  
+  accuracy.vector[i] <- mean(p==test$Survived)
+ 
+  dataset[folds$subsets[folds$which == i], ]$holdoutpred <- p
+}
+cvRandomModel
+
+predictions <- predict(cvRandomModel, dataset)
+mean(predictions==dataset$Survived) 
+
+titanic_test$holdoutpred <- dataset$holdoutpred[1:142]
+
+predictions2 <- predict(cvRandomModel, titanic_test)
+write.csv(predictions2, file="Predictions_nestedcv.csv")
+```   
+Attempt #6
+The following attempt utilizes boosting. The model did not outperform previous models when ran on the test set. However, there are some observations of note. First, this model placed 0 importance on the feature Alone, which tells if a given passenger was traveling alone on the titanic. Also, this model decreased the importance of Score. 
+```{r}
+## Boosting
+library(adabag)
+adaboost<-boosting(Survived ~ ., data=titanic_train_set[,-1], boos=FALSE, mfinal=20)
+p <- predict(adaboost,validation_set)
+adaboost$importance
+
+p <- predict(adaboost, titanic_test)
+write.csv(p$class, file="Predictions_boosting2.csv")
+View(titanic_train_set)
+```
+Attempt #7
+This attempt used cross validation to tune the depth and number of trees used in boosting.  
+```{r}
+library(cvTools)
+cv_opts = trainControl(method="cv", number=10)
+Grid <- expand.grid(maxdepth=c(4,5,6,7),nu=.01,iter=c(50,100,150,200))
+results_ada = train(Survived~ ., data=titanic_train_set[,-1], method="ada",
+                    trControl=cv_opts,tuneGrid=Grid)
+p <- predict(results_ada, titanic_test)
+write.csv(p, "Predictions_boosting_new2.csv")
+
+```
+
+
+Attempt #8
+Our eighth attempt worked to tune random forest using cross validation to find the optimal number of trees.
+```{r}
+dataset <- titanic_train_set
+control <- trainControl(method="cv", number=10, search="grid")
+metric <- "Accuracy"
+tunegrid <- expand.grid(mtry=c(10,15,20))
+modellist <- list()
+seed = 5
+for (ntree in c(100, 150, 200, 250)) {
+  set.seed(seed)
+  fit <- train(Survived~., data=dataset[,-1], method="rf", metric=metric, tuneGrid=tunegrid, trControl=control, ntree=ntree)
+  key <- toString(ntree)
+  modellist[[key]] <- fit
+}
+results <- resamples(modellist)
+modellist
+
+titanicrf <- randomForest(titanic_train[,-(1:2)], titanic_train$Survived, 
+                          ntree = 200, mtry = 10, importance = TRUE)
+
+pred <- predict(titanicrf, validation_set)
+mean(pred==validation_set$Survived)
+
+pred2 <- predict(titanicrf, titanic_test)
+write.csv(pred2, "Prediction_tuned.csv")
+```
+
+Attempt # 9 
+Our final attempt uses a gradient boosting, which also performed very well on the validation set, but did not outperform our other models on the test set. 
+```{r}
+model <- train(Survived ~., data = titanic_train_set, method = "xgbTree", trControl = trainControl("cv", number = 10))
+
+pred <- predict(model, validation_set)
+mean(pred == validation_set$Survived)
+
+pred2 <- predict(model, titanic_test)
+write.csv(pred2, "Prediction_xgb.csv")
+```
+
+Conclusion:
+
+Throughout this project, we had great success when it came to feature engineering. Specifically, the created feature "Score" greatly improved our performance on the test set. Also, using density plots to find the natural "bins" for certain numeric varibales was another way that we were able to create a better model. Finally, we tried multiple models with cross validation, nested cross validation, and boosting, but in the end, we found the greatest success with random forest models that used engineered features. 
